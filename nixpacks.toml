@@ -33,5 +33,4 @@ cmds = [
   "mkdir -p /tmp/test_files"
 ]
 
-[phases.setup.aptPkgs]
-runtime = ["ca-certificates", "libmagic1"] 
+aptPkgs = ["ca-certificates", "libmagic1"] 
