@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import traceback
-from telegram import Update
+from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import tempfile
 import time
@@ -184,6 +184,71 @@ async def convert_video_to_gif(video_path, max_width=MAX_WIDTH_PX, max_duration=
         safe_cleanup([temp_dir])
         raise e
 
+async def send_gif_with_fallbacks(update, gif_path, gif_size_mb, processing_message, user_id):
+    """Send GIF with multiple fallback methods if one fails."""
+    try:
+        # Log detailed info about the file
+        logger.info(f"Attempting to send GIF to user {user_id}: Path={gif_path}, Size={gif_size_mb:.2f}MB, Exists={os.path.exists(gif_path)}")
+        
+        # Update status message
+        await processing_message.edit_text("GIF created! Sending to you now...")
+        
+        # Method 1: Try with direct file path
+        try:
+            with open(gif_path, 'rb') as gif_file:
+                await update.message.reply_animation(
+                    animation=gif_file,
+                    filename="converted.gif",
+                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
+                )
+                logger.info(f"Successfully sent GIF as animation to user {user_id}")
+                return True
+        except Exception as e1:
+            logger.warning(f"Method 1 failed for user {user_id}: {str(e1)}")
+        
+        # Method 2: Try with InputFile
+        try:
+            await processing_message.edit_text("First sending method failed. Trying another...")
+            with open(gif_path, 'rb') as gif_file:
+                input_file = InputFile(gif_file)
+                await update.message.reply_animation(
+                    animation=input_file,
+                    filename="converted.gif",
+                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
+                )
+                logger.info(f"Successfully sent GIF as animation using InputFile to user {user_id}")
+                return True
+        except Exception as e2:
+            logger.warning(f"Method 2 failed for user {user_id}: {str(e2)}")
+        
+        # Method 3: Try as document
+        try:
+            await processing_message.edit_text("Animation sending failed. Trying as document...")
+            with open(gif_path, 'rb') as gif_file:
+                await update.message.reply_document(
+                    document=gif_file,
+                    filename="converted.gif",
+                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB) - Note: Sending as document due to technical issues."
+                )
+                logger.info(f"Successfully sent GIF as document to user {user_id}")
+                return True
+        except Exception as e3:
+            logger.warning(f"Method 3 failed for user {user_id}: {str(e3)}")
+            
+        # All methods failed
+        logger.error(f"All sending methods failed for user {user_id}")
+        await processing_message.edit_text(
+            "Sorry, I couldn't send the GIF. The conversion worked but there was an issue with Telegram's API."
+        )
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error in send_gif_with_fallbacks for user {user_id}: {str(e)}\n{traceback.format_exc()}")
+        await processing_message.edit_text(
+            "Sorry, I couldn't send the GIF due to an unexpected error."
+        )
+        return False
+
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Convert video to GIF when a video is received."""
     user_id = update.effective_user.id
@@ -235,40 +300,15 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             safe_cleanup([video_path, temp_dir])
             return
         
-                    # Send the GIF back to the user as an animation
+        # Try to send the GIF with multiple fallback methods
+        success = await send_gif_with_fallbacks(update, gif_path, gif_size_mb, processing_message, user_id)
+        
+        if success:
+            # Delete the processing message if we successfully sent the GIF
             try:
-                with open(gif_path, 'rb') as gif_file:
-                    await update.message.reply_animation(
-                        animation=gif_file,
-                        filename="converted.gif",
-                        caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
-                    )
-            except Exception as e:
-                if "Request Entity Too Large" in str(e):
-                    await processing_message.edit_text(
-                        f"The resulting GIF is too large to send. Please try with a shorter or smaller video."
-                    )
-                    return
-                # If animation fails (e.g., for very large GIFs), try as document
-                elif "animation" in str(e).lower():
-                    logger.warning(f"Failed to send as animation, trying as document: {str(e)}")
-                    try:
-                        with open(gif_path, 'rb') as gif_file:
-                            await update.message.reply_document(
-                                document=gif_file,
-                                filename="converted.gif",
-                                caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB) - Note: This file is too large to display as animation."
-                            )
-                    except Exception as doc_e:
-                        logger.error(f"Failed to send as document too: {str(doc_e)}")
-                        raise doc_e
-                else:
-                    raise
-        
-        logger.info(f"GIF sent to user {user_id}")
-        
-        # Delete the processing message
-        await processing_message.delete()
+                await processing_message.delete()
+            except Exception:
+                pass
         
     except ValueError as e:
         # Handle validation errors (file size, etc.)
@@ -349,40 +389,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 safe_cleanup([video_path, temp_dir])
                 return
             
-            # Send the GIF back to the user as an animation
-            try:
-                with open(gif_path, 'rb') as gif_file:
-                    await update.message.reply_animation(
-                        animation=gif_file,
-                        filename="converted.gif",
-                        caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
-                    )
-            except Exception as e:
-                if "Request Entity Too Large" in str(e):
-                    await processing_message.edit_text(
-                        f"The resulting GIF is too large to send. Please try with a shorter or smaller video."
-                    )
-                    return
-                # If animation fails (e.g., for very large GIFs), try as document
-                elif "animation" in str(e).lower():
-                    logger.warning(f"Failed to send as animation, trying as document: {str(e)}")
-                    try:
-                        with open(gif_path, 'rb') as gif_file:
-                            await update.message.reply_document(
-                                document=gif_file,
-                                filename="converted.gif",
-                                caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB) - Note: This file is too large to display as animation."
-                            )
-                    except Exception as doc_e:
-                        logger.error(f"Failed to send as document too: {str(doc_e)}")
-                        raise doc_e
-                else:
-                    raise
+            # Try to send the GIF with multiple fallback methods
+            success = await send_gif_with_fallbacks(update, gif_path, gif_size_mb, processing_message, user_id)
             
-            logger.info(f"GIF sent to user {user_id}")
-            
-            # Delete the processing message
-            await processing_message.delete()
+            if success:
+                # Delete the processing message if we successfully sent the GIF
+                try:
+                    await processing_message.delete()
+                except Exception:
+                    pass
             
         except ValueError as e:
             # Handle validation errors (file size, etc.)
