@@ -126,6 +126,7 @@ async def run_with_timeout(coro, timeout):
 async def convert_video_to_gif(video_path, max_width=MAX_WIDTH_PX, max_duration=MAX_DURATION_SECONDS, fps=FPS):
     """Convert video to GIF with error handling."""
     temp_dir = tempfile.mkdtemp()
+    mp4_path = os.path.join(temp_dir, "output.mp4")
     gif_path = os.path.join(temp_dir, "output.gif")
     
     try:
@@ -149,20 +150,33 @@ async def convert_video_to_gif(video_path, max_width=MAX_WIDTH_PX, max_duration=
         
         # Optimize for Telegram - use lower fps for smaller file size
         # Telegram prefers 30fps or less
-        actual_fps = min(fps, 30)
+        actual_fps = min(fps, 25)  # Telegram works best with 25fps or less
         
-        # Write the GIF file with progress logging
-        logger.info(f"Converting video to GIF (duration: {video_clip.duration:.1f}s, size: {video_clip.size}, fps: {actual_fps})")
+        # IMPORTANT: For Telegram to recognize as proper animation, we'll use a 2-step process:
+        # 1. First create an optimized MP4 (which Telegram handles better)
+        logger.info(f"Creating optimized MP4 (duration: {video_clip.duration:.1f}s, size: {video_clip.size}, fps: {actual_fps})")
         start_time = time.time()
         
-        # Use write_gif with optimized settings for Telegram
-        video_clip.write_gif(
-            gif_path, 
-            fps=actual_fps, 
-            program='ffmpeg',  # Use ffmpeg for better quality
-            opt='optimizeplus',  # Use optimization
-            fuzz=10  # Allow some color approximation for smaller file size
+        # Write optimized MP4 with good settings for Telegram
+        video_clip.write_videofile(
+            mp4_path,
+            fps=actual_fps,
+            codec='libx264',
+            audio=False,  # No audio needed for GIF
+            preset='ultrafast',
+            ffmpeg_params=['-pix_fmt', 'yuv420p']  # Compatible format
         )
+        
+        # 2. Then create GIF from the optimized MP4
+        logger.info("Converting optimized MP4 to GIF format")
+        from_mp4_clip = VideoFileClip(mp4_path)
+        from_mp4_clip.write_gif(
+            gif_path,
+            fps=actual_fps,
+            opt='nq',  # Use 'nq' for better quality with Telegram
+            colors=256  # Maximum colors for better quality
+        )
+        from_mp4_clip.close()
         
         conversion_time = time.time() - start_time
         logger.info(f"GIF conversion completed in {conversion_time:.2f} seconds")
@@ -193,42 +207,53 @@ async def send_gif_with_fallbacks(update, gif_path, gif_size_mb, processing_mess
         # Update status message
         await processing_message.edit_text("GIF created! Sending to you now...")
         
-        # Method 1: Try with direct file path
+        # Method 1: Send as animation with width/height parameters
+        # This is the most reliable way to get Telegram to recognize it as a proper GIF
         try:
+            # Get GIF dimensions for proper display
+            from PIL import Image
+            with Image.open(gif_path) as img:
+                width, height = img.size
+            
+            # Send with explicit width/height which helps Telegram recognize it as animation
             with open(gif_path, 'rb') as gif_file:
                 await update.message.reply_animation(
                     animation=gif_file,
-                    filename="converted.gif",
-                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
+                    width=width,
+                    height=height,
+                    filename="animation.gif",  # Use .gif extension explicitly
+                    caption=f"Here's your GIF! Tap to save or share."
                 )
-                logger.info(f"Successfully sent GIF as animation to user {user_id}")
+                logger.info(f"Successfully sent GIF as animation to user {user_id} with dimensions {width}x{height}")
                 return True
         except Exception as e1:
             logger.warning(f"Method 1 failed for user {user_id}: {str(e1)}")
         
-        # Method 2: Try with InputFile
+        # Method 2: Try with different MIME type
         try:
             await processing_message.edit_text("First sending method failed. Trying another...")
-            with open(gif_path, 'rb') as gif_file:
-                input_file = InputFile(gif_file)
+            
+            # Create a copy with proper MIME type
+            mime_fixed_path = os.path.join(os.path.dirname(gif_path), "animation.gif")
+            shutil.copy2(gif_path, mime_fixed_path)
+            
+            with open(mime_fixed_path, 'rb') as gif_file:
                 await update.message.reply_animation(
-                    animation=input_file,
-                    filename="converted.gif",
-                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
+                    animation=InputFile(gif_file, filename="animation.gif"),
+                    caption=f"Here's your GIF! Tap to save or share."
                 )
-                logger.info(f"Successfully sent GIF as animation using InputFile to user {user_id}")
+                logger.info(f"Successfully sent GIF using method 2 to user {user_id}")
                 return True
         except Exception as e2:
             logger.warning(f"Method 2 failed for user {user_id}: {str(e2)}")
         
-        # Method 3: Try as document
+        # Method 3: Try as document with GIF MIME type
         try:
             await processing_message.edit_text("Animation sending failed. Trying as document...")
             with open(gif_path, 'rb') as gif_file:
                 await update.message.reply_document(
-                    document=gif_file,
-                    filename="converted.gif",
-                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB) - Note: Sending as document due to technical issues."
+                    document=InputFile(gif_file, filename="animation.gif"),
+                    caption=f"Here's your GIF! You may need to download it first."
                 )
                 logger.info(f"Successfully sent GIF as document to user {user_id}")
                 return True
