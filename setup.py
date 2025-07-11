@@ -13,6 +13,8 @@ setup(
         "imageio-ffmpeg>=0.4.4",
         "tqdm>=4.11.2",
         "numpy",
+        "requests>=2.25.0",
+        "python-magic>=0.4.24",
     ],
     python_requires=">=3.8",
 ) 
