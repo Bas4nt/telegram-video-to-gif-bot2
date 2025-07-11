@@ -1,7 +1,19 @@
 # nixpacks.toml
 
 [phases.setup]
-nixPkgs = ["python39", "ffmpeg", "gcc", "python39Packages.pip", "python39Packages.setuptools", "python39Packages.wheel"]
+nixPkgs = [
+  "python39", 
+  "ffmpeg", 
+  "gcc", 
+  "python39Packages.pip", 
+  "python39Packages.setuptools", 
+  "python39Packages.wheel",
+  "zlib",
+  "libjpeg",
+  "libpng",
+  "imagemagick",
+  "gifsicle"
+]
 
 [phases.install]
 cmds = [
@@ -13,4 +25,13 @@ cmds = [
 ]
 
 [start]
-cmd = ". /opt/venv/bin/activate && python bot.py" 
+cmd = ". /opt/venv/bin/activate && python bot.py"
+
+[phases.build]
+cmds = [
+  ". /opt/venv/bin/activate && python -c \"from moviepy.editor import VideoFileClip; print('MoviePy import test successful!')\"",
+  "mkdir -p /tmp/test_files"
+]
+
+[phases.setup.aptPkgs]
+runtime = ["ca-certificates", "libmagic1"] 
