@@ -147,10 +147,23 @@ async def convert_video_to_gif(video_path, max_width=MAX_WIDTH_PX, max_duration=
             logger.info(f"Video width ({video_clip.size[0]}px) exceeds limit. Resizing to {max_width}px width.")
             video_clip = video_clip.resize(width=max_width)
         
+        # Optimize for Telegram - use lower fps for smaller file size
+        # Telegram prefers 30fps or less
+        actual_fps = min(fps, 30)
+        
         # Write the GIF file with progress logging
-        logger.info(f"Converting video to GIF (duration: {video_clip.duration:.1f}s, size: {video_clip.size})")
+        logger.info(f"Converting video to GIF (duration: {video_clip.duration:.1f}s, size: {video_clip.size}, fps: {actual_fps})")
         start_time = time.time()
-        video_clip.write_gif(gif_path, fps=fps)
+        
+        # Use write_gif with optimized settings for Telegram
+        video_clip.write_gif(
+            gif_path, 
+            fps=actual_fps, 
+            program='ffmpeg',  # Use ffmpeg for better quality
+            opt='optimizeplus',  # Use optimization
+            fuzz=10  # Allow some color approximation for smaller file size
+        )
+        
         conversion_time = time.time() - start_time
         logger.info(f"GIF conversion completed in {conversion_time:.2f} seconds")
         
@@ -222,22 +235,35 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             safe_cleanup([video_path, temp_dir])
             return
         
-        # Send the GIF back to the user
-        try:
-            with open(gif_path, 'rb') as gif_file:
-                await update.message.reply_document(
-                    document=gif_file,
-                    filename="converted.gif",
-                    caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
-                )
-        except Exception as e:
-            if "Request Entity Too Large" in str(e):
-                await processing_message.edit_text(
-                    f"The resulting GIF is too large to send. Please try with a shorter or smaller video."
-                )
-                return
-            else:
-                raise
+                    # Send the GIF back to the user as an animation
+            try:
+                with open(gif_path, 'rb') as gif_file:
+                    await update.message.reply_animation(
+                        animation=gif_file,
+                        filename="converted.gif",
+                        caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
+                    )
+            except Exception as e:
+                if "Request Entity Too Large" in str(e):
+                    await processing_message.edit_text(
+                        f"The resulting GIF is too large to send. Please try with a shorter or smaller video."
+                    )
+                    return
+                # If animation fails (e.g., for very large GIFs), try as document
+                elif "animation" in str(e).lower():
+                    logger.warning(f"Failed to send as animation, trying as document: {str(e)}")
+                    try:
+                        with open(gif_path, 'rb') as gif_file:
+                            await update.message.reply_document(
+                                document=gif_file,
+                                filename="converted.gif",
+                                caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB) - Note: This file is too large to display as animation."
+                            )
+                    except Exception as doc_e:
+                        logger.error(f"Failed to send as document too: {str(doc_e)}")
+                        raise doc_e
+                else:
+                    raise
         
         logger.info(f"GIF sent to user {user_id}")
         
@@ -323,11 +349,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 safe_cleanup([video_path, temp_dir])
                 return
             
-            # Send the GIF back to the user
+            # Send the GIF back to the user as an animation
             try:
                 with open(gif_path, 'rb') as gif_file:
-                    await update.message.reply_document(
-                        document=gif_file,
+                    await update.message.reply_animation(
+                        animation=gif_file,
                         filename="converted.gif",
                         caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB)"
                     )
@@ -337,6 +363,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         f"The resulting GIF is too large to send. Please try with a shorter or smaller video."
                     )
                     return
+                # If animation fails (e.g., for very large GIFs), try as document
+                elif "animation" in str(e).lower():
+                    logger.warning(f"Failed to send as animation, trying as document: {str(e)}")
+                    try:
+                        with open(gif_path, 'rb') as gif_file:
+                            await update.message.reply_document(
+                                document=gif_file,
+                                filename="converted.gif",
+                                caption=f"Here's your GIF! (Size: {gif_size_mb:.1f}MB) - Note: This file is too large to display as animation."
+                            )
+                    except Exception as doc_e:
+                        logger.error(f"Failed to send as document too: {str(doc_e)}")
+                        raise doc_e
                 else:
                     raise
             
