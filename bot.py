@@ -3,7 +3,8 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import tempfile
-import moviepy.editor as mp
+# Change the import to be more specific
+from moviepy.editor import VideoFileClip
 
 # Enable logging
 logging.basicConfig(
@@ -49,7 +50,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await video.download_to_drive(video_path)
         
         # Convert video to GIF using moviepy
-        video_clip = mp.VideoFileClip(video_path)
+        video_clip = VideoFileClip(video_path)
         
         # Resize if the video is too large (optional)
         if video_clip.size[0] > 480:  # If width is greater than 480px
@@ -105,7 +106,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await file.download_to_drive(video_path)
             
             # Convert video to GIF using moviepy
-            video_clip = mp.VideoFileClip(video_path)
+            video_clip = VideoFileClip(video_path)
             
             # Resize if the video is too large
             if video_clip.size[0] > 480:
